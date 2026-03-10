@@ -1,0 +1,42 @@
+# Dockerfile for livekit-server
+
+# ---- 1. 构建阶段 (Builder Stage) ----
+# 使用官方的 Go + Alpine 镜像作为构建环境
+FROM golang:1.25-alpine AS builder
+
+# 设置构建参数，支持多平台架构 (amd64, arm64)
+ARG TARGETPLATFORM
+ARG TARGETARCH
+RUN echo "Building for $TARGETPLATFORM"
+
+# 设置工作目录
+WORKDIR /workspace
+
+# --- 优化层缓存 ---
+# 仅复制 go.mod 和 go.sum，并下载依赖
+# 只要依赖不变，这一层就可以被缓存，加快后续构建速度
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 复制所有源代码
+COPY . .
+
+# --- 编译 ---
+# 编译一个静态链接的、适用于 Linux 的二进制文件
+# CGO_ENABLED=0 确保了静态编译，不依赖 C 库
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -o livekit-server ./cmd/server
+
+
+# ---- 2. 运行阶段 (Runner Stage) ----
+# 使用一个极度轻量级的 alpine 镜像作为最终的运行环境
+FROM alpine
+
+# 从构建阶段复制编译好的二进制文件到最终镜像中
+COPY --from=builder /workspace/livekit-server /usr/local/bin/livekit-server
+
+# 设置入口点，当容器启动时，默认执行 livekit-server 命令
+ENTRYPOINT ["livekit-server"]
+
+# 默认命令，可以被 docker run 的参数覆盖
+# 例如，启动开发模式
+CMD ["--dev"]
